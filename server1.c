@@ -14,20 +14,47 @@ int client_count = 0;
 
 pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 
-/* Broadcast message to all clients */
+/* Remove client from list */
+void remove_client(int sock)
+{
+    pthread_mutex_lock(&lock);
+
+    for(int i = 0; i < client_count; i++)
+    {
+        if(clients[i] == sock)
+        {
+            for(int j = i; j < client_count - 1; j++)
+                clients[j] = clients[j+1];
+
+            client_count--;
+            break;
+        }
+    }
+
+    pthread_mutex_unlock(&lock);
+}
+
+/* Broadcast server message */
 void broadcast(char *msg)
 {
     pthread_mutex_lock(&lock);
 
     for(int i = 0; i < client_count; i++)
     {
-        send(clients[i], msg, strlen(msg), 0);
+        int ret = send(clients[i], msg, strlen(msg), 0);
+
+        if(ret <= 0)
+        {
+            printf("Client send failed, removing socket %d\n", clients[i]);
+            close(clients[i]);
+            remove_client(clients[i]);
+        }
     }
 
     pthread_mutex_unlock(&lock);
 }
 
-/* Thread that handles incoming client messages */
+/* Client receive thread */
 void *client_thread(void *arg)
 {
     int client_sock = *(int*)arg;
@@ -37,32 +64,39 @@ void *client_thread(void *arg)
 
     while(1)
     {
-        memset(buffer,0,BUFFER_SIZE);
+        memset(buffer, 0, BUFFER_SIZE);
 
         int bytes = recv(client_sock, buffer, BUFFER_SIZE, 0);
 
         if(bytes <= 0)
         {
-            printf("Client disconnected\n");
+            printf("Client %d disconnected\n", client_sock);
             break;
         }
 
-        printf("Client says: %s", buffer);
+        buffer[strcspn(buffer,"\n")] = 0;
+
+        printf("Client %d -> %s\n", client_sock, buffer);
     }
 
     close(client_sock);
+    remove_client(client_sock);
+
     pthread_exit(NULL);
 }
 
-/* Server broadcast thread */
+/* Server broadcast input thread */
 void *server_broadcast_thread(void *arg)
 {
     char message[BUFFER_SIZE];
 
     while(1)
     {
-        printf("Server message: ");
-        fgets(message, BUFFER_SIZE, stdin);
+        printf("\nServer broadcast: ");
+        fflush(stdout);
+
+        if(fgets(message, BUFFER_SIZE, stdin) == NULL)
+            continue;
 
         broadcast(message);
     }
@@ -85,11 +119,11 @@ int main()
     server_addr.sin_port = htons(PORT);
     server_addr.sin_addr.s_addr = INADDR_ANY;
 
-    bind(server_sock, (struct sockaddr*)&server_addr, sizeof(server_addr));
+    bind(server_sock,(struct sockaddr*)&server_addr,sizeof(server_addr));
 
-    listen(server_sock, 10);
+    listen(server_sock,10);
 
-    printf("Server started on port %d\n", PORT);
+    printf("\nServer started on port %d\n\n", PORT);
 
     pthread_t broadcast_tid;
     pthread_create(&broadcast_tid, NULL, server_broadcast_thread, NULL);
@@ -100,13 +134,18 @@ int main()
                                  (struct sockaddr*)&client_addr,
                                  &addr_len);
 
-        printf("Client connected: %s:%d\n",
+        if(client_sock < 0)
+            continue;
+
+        printf("Client connected: %s:%d  (socket %d)\n",
                inet_ntoa(client_addr.sin_addr),
-               ntohs(client_addr.sin_port));
+               ntohs(client_addr.sin_port),
+               client_sock);
 
         pthread_mutex_lock(&lock);
 
-        clients[client_count++] = client_sock;
+        if(client_count < MAX_CLIENTS)
+            clients[client_count++] = client_sock;
 
         pthread_mutex_unlock(&lock);
 
@@ -115,7 +154,7 @@ int main()
         int *pclient = malloc(sizeof(int));
         *pclient = client_sock;
 
-        pthread_create(&tid, NULL, client_thread, pclient);
+        pthread_create(&tid,NULL,client_thread,pclient);
         pthread_detach(tid);
     }
 
