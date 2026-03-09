@@ -10,7 +10,7 @@
 
 int sock;
 
-/* Receive server broadcast */
+/* Receive broadcast from server */
 void *receive_thread(void *arg)
 {
     char buffer[BUFFER_SIZE];
@@ -23,22 +23,24 @@ void *receive_thread(void *arg)
 
         if(bytes <= 0)
         {
-            printf("Server disconnected\n");
+            printf("\nServer disconnected\n");
             exit(0);
         }
 
-        printf("Server Broadcast: %s", buffer);
+        printf("\n[SERVER] %s", buffer);
+        fflush(stdout);
     }
 }
 
-/* Send message to server */
+/* Send messages to server */
 void *send_thread(void *arg)
 {
     char buffer[BUFFER_SIZE];
 
     while(1)
     {
-        fgets(buffer, BUFFER_SIZE, stdin);
+        if(fgets(buffer, BUFFER_SIZE, stdin) == NULL)
+            continue;
 
         send(sock, buffer, strlen(buffer), 0);
     }
@@ -53,9 +55,13 @@ int main()
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(PORT);
 
-    inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr);
+    inet_pton(AF_INET,"127.0.0.1",&server_addr.sin_addr);
 
-    connect(sock,(struct sockaddr*)&server_addr,sizeof(server_addr));
+    if(connect(sock,(struct sockaddr*)&server_addr,sizeof(server_addr)) < 0)
+    {
+        printf("Connection failed\n");
+        return 1;
+    }
 
     printf("Connected to server\n");
 
