@@ -92,8 +92,6 @@ void *server_broadcast_thread(void *arg)
 
     while(1)
     {
-        printf("\nServer broadcast: ");
-        fflush(stdout);
 
         if(fgets(message, BUFFER_SIZE, stdin) == NULL)
             continue;
