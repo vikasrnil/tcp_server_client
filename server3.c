@@ -94,7 +94,7 @@ void *can_reader_thread(void *arg)
 
         pos += sprintf(msg+pos, "\n");
 
-        printf("%s", msg);
+        //printf("%s", msg);
 
         broadcast(msg);
     }
