@@ -122,7 +122,6 @@ int main()
     struct sockaddr_in server_addr, client_addr;
     socklen_t addr_len = sizeof(client_addr);
 
-    /* Ignore SIGPIPE so server doesn't crash */
     signal(SIGPIPE, SIG_IGN);
 
     server_sock = socket(AF_INET, SOCK_STREAM, 0);
