@@ -20,31 +20,23 @@
 int clients[MAX_CLIENTS];
 int client_count = 0;
 
-int server_sock;
-
-//pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
-
-
 /* ---------------- REMOVE CLIENT ---------------- */
 
 void remove_client(int index)
 {
     close(clients[index]);
 
-    for(int j=index; j<client_count-1; j++)
+    for(int j = index; j < client_count - 1; j++)
         clients[j] = clients[j+1];
 
     client_count--;
 }
 
-
 /* ---------------- BROADCAST ---------------- */
 
 void broadcast(char *msg)
 {
-   // pthread_mutex_lock(&lock);
-
-    for(int i=0;i<client_count;i++)
+    for(int i = 0; i < client_count; i++)
     {
         int ret = send(clients[i], msg, strlen(msg), MSG_NOSIGNAL);
 
@@ -55,37 +47,34 @@ void broadcast(char *msg)
             i--;
         }
     }
-
-  //  pthread_mutex_unlock(&lock);
 }
-
 
 /* ---------------- CAN THREAD ---------------- */
 
 void *can_reader_thread(void *arg)
 {
-    int s,nbytes;
+    int s, nbytes;
     struct sockaddr_can addr;
     struct ifreq ifr;
     struct can_frame frame;
 
     char msg[256];
 
+    /* Create CAN socket */
     s = socket(PF_CAN, SOCK_RAW, CAN_RAW);
-
     if(s < 0)
     {
         perror("CAN socket");
         pthread_exit(NULL);
     }
 
-    strcpy(ifr.ifr_name,"can0");
-    ioctl(s,SIOCGIFINDEX,&ifr);
+    strcpy(ifr.ifr_name, "can0");
+    ioctl(s, SIOCGIFINDEX, &ifr);
 
     addr.can_family = AF_CAN;
     addr.can_ifindex = ifr.ifr_ifindex;
 
-    if(bind(s,(struct sockaddr *)&addr,sizeof(addr)) < 0)
+    if(bind(s, (struct sockaddr *)&addr, sizeof(addr)) < 0)
     {
         perror("CAN bind");
         pthread_exit(NULL);
@@ -95,19 +84,20 @@ void *can_reader_thread(void *arg)
 
     while(1)
     {
-        nbytes = read(s,&frame,sizeof(frame));
+        nbytes = read(s, &frame, sizeof(frame));
 
         if(nbytes < 0)
             continue;
 
-        int pos = sprintf(msg,"CAN 0x%03X [%d] ",
+        int pos = sprintf(msg,
+                          "CAN 0x%03X [%d] ",
                           frame.can_id,
                           frame.can_dlc);
 
-        for(int i=0;i<frame.can_dlc;i++)
-            pos += sprintf(msg+pos,"%02X ",frame.data[i]);
+        for(int i = 0; i < frame.can_dlc; i++)
+            pos += sprintf(msg + pos, "%02X ", frame.data[i]);
 
-        sprintf(msg+pos,"\n");
+        sprintf(msg + pos, "\n");
 
         broadcast(msg);
     }
@@ -116,13 +106,46 @@ void *can_reader_thread(void *arg)
     return NULL;
 }
 
-
-/* ---------------- TCP ACCEPT THREAD ---------------- */
+/* ---------------- TCP THREAD ---------------- */
 
 void *tcp_accept_thread(void *arg)
 {
+    int server_sock;
+
+    struct sockaddr_in server_addr;
     struct sockaddr_in client_addr;
+
     socklen_t addr_len = sizeof(client_addr);
+
+    /* Create TCP socket */
+    server_sock = socket(AF_INET, SOCK_STREAM, 0);
+
+    if(server_sock < 0)
+    {
+        perror("Socket");
+        pthread_exit(NULL);
+    }
+
+    int opt = 1;
+    setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(TCP_PORT);
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+
+    if(bind(server_sock,(struct sockaddr*)&server_addr,sizeof(server_addr)) < 0)
+    {
+        perror("Bind");
+        pthread_exit(NULL);
+    }
+
+    if(listen(server_sock,10) < 0)
+    {
+        perror("Listen");
+        pthread_exit(NULL);
+    }
+
+    printf("TCP server listening on port %d\n", TCP_PORT);
 
     while(1)
     {
@@ -141,8 +164,6 @@ void *tcp_accept_thread(void *arg)
                ntohs(client_addr.sin_port),
                client_sock);
 
-       // pthread_mutex_lock(&lock);
-
         if(client_count < MAX_CLIENTS)
         {
             clients[client_count++] = client_sock;
@@ -152,64 +173,39 @@ void *tcp_accept_thread(void *arg)
             printf("Max clients reached\n");
             close(client_sock);
         }
-
-      //  pthread_mutex_unlock(&lock);
     }
 
+    close(server_sock);
     return NULL;
 }
-
 
 /* ---------------- MAIN ---------------- */
 
 int main()
 {
+    /* Ignore SIGPIPE so server doesn't crash if client disconnects */
     signal(SIGPIPE, SIG_IGN);
-
-    struct sockaddr_in server_addr;
-
-    server_sock = socket(AF_INET,SOCK_STREAM,0);
-
-    if(server_sock < 0)
-    {
-        perror("Socket");
-        return -1;
-    }
-
-    int opt = 1;
-    setsockopt(server_sock,SOL_SOCKET,SO_REUSEADDR,&opt,sizeof(opt));
-
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(TCP_PORT);
-    server_addr.sin_addr.s_addr = INADDR_ANY;
-
-    if(bind(server_sock,(struct sockaddr*)&server_addr,sizeof(server_addr)) < 0)
-    {
-        perror("Bind");
-        return -1;
-    }
-
-    if(listen(server_sock,10) < 0)
-    {
-        perror("Listen");
-        return -1;
-    }
-
-    printf("TCP Broadcast Server started on port %d\n",TCP_PORT);
 
     pthread_t can_tid;
     pthread_t tcp_tid;
 
-    pthread_create(&can_tid,NULL,can_reader_thread,NULL);
-    pthread_detach(can_tid);
+    /* Start CAN thread */
+    if(pthread_create(&can_tid, NULL, can_reader_thread, NULL) != 0)
+    {
+        perror("CAN thread create");
+        return -1;
+    }
 
-    pthread_create(&tcp_tid,NULL,tcp_accept_thread,NULL);
+    /* Start TCP thread */
+    if(pthread_create(&tcp_tid, NULL, tcp_accept_thread, NULL) != 0)
+    {
+        perror("TCP thread create");
+        return -1;
+    }
+
+    pthread_detach(can_tid);
     pthread_detach(tcp_tid);
 
-    while(1)
-        pause();
-
-    close(server_sock);
-
-    return 0;
+    /* Keep process alive */
+    pthread_exit(NULL);
 }
