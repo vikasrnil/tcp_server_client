@@ -183,7 +183,6 @@ void *tcp_accept_thread(void *arg)
 
 int main()
 {
-    /* Ignore SIGPIPE so server doesn't crash if client disconnects */
     signal(SIGPIPE, SIG_IGN);
 
     pthread_t can_tid;
@@ -206,6 +205,5 @@ int main()
     pthread_detach(can_tid);
     pthread_detach(tcp_tid);
 
-    /* Keep process alive */
     pthread_exit(NULL);
 }
